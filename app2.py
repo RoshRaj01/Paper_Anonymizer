@@ -42,7 +42,7 @@ def convert_to_pdf_msword(input_file, temp_dir):
 
 
 # =========================
-# 🔹 EXTRACT LINES
+# 🔹 EXTRACT WORDS → LINES
 # =========================
 def extract_lines(page):
     words = page.get_text("words")
@@ -79,6 +79,19 @@ def extract_lines(page):
 def extract_json(text):
     match = re.search(r'\{.*\}', text, re.DOTALL)
     return match.group(0) if match else None
+
+
+# =========================
+# 🔹 FLATTEN LIST (FIX BUG)
+# =========================
+def flatten_list(lst):
+    flat = []
+    for item in lst:
+        if isinstance(item, list):
+            flat.extend(item)
+        else:
+            flat.append(item)
+    return flat
 
 
 # =========================
@@ -126,6 +139,9 @@ Text:
 """
 
     response = ask_ollama(prompt)
+
+    print("\n--- LLM RESPONSE ---\n", response)
+
     json_text = extract_json(response)
 
     if not json_text:
@@ -149,11 +165,19 @@ def anonymize_pdf(input_pdf, output_pdf):
 
     author_lines = result.get("authors", [])
 
+    # 🔥 Fix nested lists
+    author_lines = flatten_list(author_lines)
+
+    # 🔥 Fix text instead of indices
     if author_lines and isinstance(author_lines[0], str):
         author_lines = map_text_to_indices(lines, author_lines)
 
-    # Add heuristic
+    author_lines = flatten_list(author_lines)
+
+    # 🔥 Add heuristic
     author_lines = list(set(author_lines + detect_affiliation_lines(lines)))
+
+    print("Detected author lines:", author_lines)
 
     if not author_lines:
         doc.save(output_pdf)
@@ -176,7 +200,7 @@ def anonymize_pdf(input_pdf, output_pdf):
 
 
 # =========================
-# 🔹 MAIN PROCESS
+# 🔹 MAIN PIPELINE
 # =========================
 def process_all(input_dir="Input", output_dir="Output"):
     os.makedirs(output_dir, exist_ok=True)
@@ -192,7 +216,7 @@ def process_all(input_dir="Input", output_dir="Output"):
             input_path = os.path.join(root, file)
 
             try:
-                # ---- Convert if Word ----
+                # ---- FILE TYPE ----
                 if file.endswith((".doc", ".docx")):
                     pdf_path = convert_to_pdf_msword(input_path, temp_dir)
                     converted.append(file)
