@@ -82,16 +82,30 @@ def extract_json(text):
 
 
 # =========================
-# 🔹 FLATTEN LIST (FIX BUG)
+# 🔹 NORMALIZE INDICES
 # =========================
-def flatten_list(lst):
-    flat = []
+def normalize_indices(lst):
+    result = []
+
     for item in lst:
-        if isinstance(item, list):
-            flat.extend(item)
-        else:
-            flat.append(item)
-    return flat
+        if isinstance(item, int):
+            result.append(item)
+
+        elif isinstance(item, str):
+            result.append(item)
+
+        elif isinstance(item, list):
+            result.extend(normalize_indices(item))  # recursive flatten
+
+        elif isinstance(item, dict):
+            # Try extracting number safely
+            for v in item.values():
+                if isinstance(v, int):
+                    result.append(v)
+
+        # ignore everything else
+
+    return result
 
 
 # =========================
@@ -165,16 +179,17 @@ def anonymize_pdf(input_pdf, output_pdf):
 
     author_lines = result.get("authors", [])
 
-    # 🔥 Fix nested lists
-    author_lines = flatten_list(author_lines)
+    # 🔥 normalize everything
+    author_lines = normalize_indices(author_lines)
 
-    # 🔥 Fix text instead of indices
+    # 🔥 map text if needed
     if author_lines and isinstance(author_lines[0], str):
         author_lines = map_text_to_indices(lines, author_lines)
 
-    author_lines = flatten_list(author_lines)
+    # 🔥 normalize again (post-mapping safety)
+    author_lines = normalize_indices(author_lines)
 
-    # 🔥 Add heuristic
+    # 🔥 add heuristics
     author_lines = list(set(author_lines + detect_affiliation_lines(lines)))
 
     print("Detected author lines:", author_lines)
