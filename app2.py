@@ -91,19 +91,15 @@ def normalize_indices(lst):
         if isinstance(item, int):
             result.append(item)
 
-        elif isinstance(item, str):
-            result.append(item)
-
         elif isinstance(item, list):
-            result.extend(normalize_indices(item))  # recursive flatten
+            result.extend(normalize_indices(item))
 
         elif isinstance(item, dict):
-            # Try extracting number safely
             for v in item.values():
                 if isinstance(v, int):
                     result.append(v)
 
-        # ignore everything else
+        # ❌ IGNORE STRINGS COMPLETELY HERE
 
     return result
 
@@ -179,12 +175,19 @@ def anonymize_pdf(input_pdf, output_pdf):
 
     author_lines = result.get("authors", [])
 
-    # 🔥 normalize everything
-    author_lines = normalize_indices(author_lines)
+    raw_authors = result.get("authors", [])
 
-    # 🔥 map text if needed
-    if author_lines and isinstance(author_lines[0], str):
-        author_lines = map_text_to_indices(lines, author_lines)
+    # Step 1: If strings exist → map FIRST
+    if raw_authors and any(isinstance(x, str) for x in raw_authors):
+        mapped = map_text_to_indices(lines, raw_authors)
+    else:
+        mapped = raw_authors
+
+    # Step 2: Normalize (remove garbage, keep only ints)
+    author_lines = normalize_indices(mapped)
+
+    # Step 3: Add heuristics
+    author_lines = list(set(author_lines + detect_affiliation_lines(lines)))
 
     # 🔥 normalize again (post-mapping safety)
     author_lines = normalize_indices(author_lines)
