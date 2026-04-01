@@ -22,7 +22,7 @@ def ask_ollama(prompt):
 
 
 # =========================
-# 🔹 WORD → PDF
+# 🔹 WORD → PDF (MS WORD)
 # =========================
 def convert_to_pdf_msword(input_file, temp_dir):
     os.makedirs(temp_dir, exist_ok=True)
@@ -99,6 +99,8 @@ def normalize_indices(lst):
                 if isinstance(v, int):
                     result.append(v)
 
+        # ❌ IGNORE STRINGS COMPLETELY HERE
+
     return result
 
 
@@ -115,34 +117,11 @@ def map_text_to_indices(lines, texts):
 
 
 # =========================
-# 🔹 FIND TITLE BOTTOM  ✅ FIX
+# 🔹 HEURISTICS
 # =========================
-def find_title_bottom(lines):
-    title_candidates = lines[:8]
-    title_candidates = [l for l in title_candidates if len(l["text"]) > 10]
-
-    if not title_candidates:
-        return 100
-
-    return max(l["y1"] for l in title_candidates)
-
-
-# =========================
-# 🔹 FIND ABSTRACT  ✅ FIX
-# =========================
-def find_abstract_y(lines):
-    for line in lines:
-        text = line["text"].lower()
-
-        if (
-            "abstract" in text or
-            text.startswith("abstract") or
-            "abstract—" in text or
-            "abstract:" in text
-        ):
-            return line["y0"]
-
-    return None
+def detect_affiliation_lines(lines):
+    keywords = ["university", "institute", "department", "@", "college", "school"]
+    return [i for i, l in enumerate(lines) if any(k in l["text"].lower() for k in keywords)]
 
 
 # =========================
@@ -171,6 +150,8 @@ Text:
 
     response = ask_ollama(prompt)
 
+    print("\n--- LLM RESPONSE ---\n", response)
+
     json_text = extract_json(response)
 
     if not json_text:
@@ -183,7 +164,7 @@ Text:
 
 
 # =========================
-# 🔹 ANONYMIZE PDF (FIXED)
+# 🔹 ANONYMIZE PDF
 # =========================
 def anonymize_pdf(input_pdf, output_pdf):
     doc = fitz.open(input_pdf)
@@ -192,41 +173,39 @@ def anonymize_pdf(input_pdf, output_pdf):
     lines = extract_lines(page)
     result = classify_lines(lines)
 
+    author_lines = result.get("authors", [])
+
     raw_authors = result.get("authors", [])
 
-    # Step 1: map strings if needed
+    # Step 1: If strings exist → map FIRST
     if raw_authors and any(isinstance(x, str) for x in raw_authors):
         mapped = map_text_to_indices(lines, raw_authors)
     else:
         mapped = raw_authors
 
-    # Step 2: normalize
+    # Step 2: Normalize (remove garbage, keep only ints)
     author_lines = normalize_indices(mapped)
 
-    # Step 3: validate indices
-    author_lines = [i for i in author_lines if isinstance(i, int) and i < len(lines)]
+    # Step 3: Add heuristics
+    author_lines = list(set(author_lines + detect_affiliation_lines(lines)))
+
+    # 🔥 normalize again (post-mapping safety)
+    author_lines = normalize_indices(author_lines)
+
+    # 🔥 add heuristics
+    author_lines = list(set(author_lines + detect_affiliation_lines(lines)))
 
     print("Detected author lines:", author_lines)
 
-    # 🔥 FIX: Use layout boundaries instead
-    title_bottom = find_title_bottom(lines)
-    abstract_y = find_abstract_y(lines)
-
-    if not abstract_y:
-        print("⚠️ Abstract not found → skipping")
+    if not author_lines:
         doc.save(output_pdf)
-        return False
+        return False  # skipped
 
-    top = title_bottom + 5
-    bottom = abstract_y - 5
-
-    if bottom <= top:
-        print("⚠️ Invalid region → skipping")
-        doc.save(output_pdf)
-        return False
+    y_top = min(lines[i]["y0"] for i in author_lines)
+    y_bottom = max(lines[i]["y1"] for i in author_lines)
 
     rect = page.rect
-    redact_area = fitz.Rect(rect.x0, top, rect.x1, bottom)
+    redact_area = fitz.Rect(rect.x0, y_top - 5, rect.x1, y_bottom + 5)
 
     page.add_redact_annot(redact_area, fill=(1, 1, 1))
     page.apply_redactions()
@@ -235,7 +214,7 @@ def anonymize_pdf(input_pdf, output_pdf):
     doc.save(output_pdf)
     doc.close()
 
-    return True
+    return True  # anonymized
 
 
 # =========================
@@ -255,6 +234,7 @@ def process_all(input_dir="Input", output_dir="Output"):
             input_path = os.path.join(root, file)
 
             try:
+                # ---- FILE TYPE ----
                 if file.endswith((".doc", ".docx")):
                     pdf_path = convert_to_pdf_msword(input_path, temp_dir)
                     converted.append(file)
@@ -276,6 +256,9 @@ def process_all(input_dir="Input", output_dir="Output"):
                 print(f"❌ Error processing {file}: {e}")
                 skipped.append(file)
 
+    # =========================
+    # 🔹 SUMMARY
+    # =========================
     print("\n========== SUMMARY ==========")
 
     print("\n📄 Converted Files:")
@@ -286,7 +269,7 @@ def process_all(input_dir="Input", output_dir="Output"):
     for f in anonymized:
         print("-", f)
 
-    print("\n⚠️ Skipped Files:")
+    print("\n⚠️ Skipped Files (No author info):")
     for f in skipped:
         print("-", f)
 
